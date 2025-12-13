@@ -1,0 +1,14 @@
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.5.1
+Pillow==10.4.0
+opencv-python==4.10.0.84
+matplotlib==3.9.2
+seaborn==0.13.2
+tqdm==4.66.5
+tensorboard==2.16.2
+einops==0.8.0

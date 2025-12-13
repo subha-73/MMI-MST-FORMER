@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Data & models (do NOT push)
+1_data/
+*.pt
+*.pth
+
+# Results
+3_results/
+
+# Environment
+venv/
+.env/
