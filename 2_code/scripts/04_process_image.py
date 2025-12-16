@@ -20,7 +20,7 @@ ROI_DIR = os.path.join(ROOT_DIR, '1_data', 'raw', 'grape', 'ROI images')
 
 # Parameters
 IMG_SIZE = 224
-MAX_SEQ_LEN = 10  # Maximum visits per patient to keep (pad if fewer, cut if more)
+MAX_SEQ_LEN = 9 # Maximum visits per patient to keep (pad if fewer, cut if more)
 
 print(f"{'='*70}")
 print(f"GRAPE GLAUCOMA - IMAGE TENSOR GENERATION (ROI)")

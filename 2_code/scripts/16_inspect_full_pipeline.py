@@ -52,7 +52,7 @@ def print_neat_vector(tensor, title):
 
 def inspect_full_chain():
     print(f"{'='*60}")
-    print(f"FULL PIPELINE X-RAY: EVERY MODULE OUTPUT")
+    print(f"FULL PIPELINE ")
     print(f"{'='*60}")
 
     # 1. LOAD DATA

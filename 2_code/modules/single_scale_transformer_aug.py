@@ -2,6 +2,10 @@ import torch
 import torch.nn as nn
 import math
 
+import warnings
+# Filter out the specific PyTorch warning
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=50):
         super(PositionalEncoding, self).__init__()
