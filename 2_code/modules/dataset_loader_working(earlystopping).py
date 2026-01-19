@@ -1,152 +1,182 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
 
 class GrapeDataset(Dataset):
     """
     Dataset loader for glaucoma progression with clinical data.
     Handles irregular sampling and returns sequences for forecasting.
     """
-    def __init__(self, tensor_path, csv_path, max_seq_len=9, overlap_stride=1, patient_ids=None):
+    def __init__(self, tensor_path, csv_path, max_seq_len=9, overlap_stride=1):
         """
         Args:
-            tensor_path: path to pre-computed image tensors
+            tensor_path: path to pre-computed image tensors [num_patients, max_visits, 3, 224, 224]
             csv_path: path to clinical data CSV
-            max_seq_len: maximum sequence length
-            overlap_stride: stride for overlapping sequences
-            patient_ids: List of specific patient IDs to include (used for splitting)
+            max_seq_len: maximum sequence length (fixed window)
+            overlap_stride: stride for creating overlapping sequences (data augmentation)
         """
-        # Load images
+        print(f"   [LOADER] Target Tensor: {tensor_path}")
         self.images = torch.load(tensor_path, weights_only=True)
         
-        # Load CSV
-        if isinstance(csv_path, str):
-            self.clinical_df = pd.read_csv(csv_path)
-        else:
-            self.clinical_df = csv_path
+        print(f"   [LOADER] Target CSV: {csv_path}")
+        self.clinical_df = pd.read_csv(csv_path)
 
         # Filter and sort by patient and visit
         self.clinical_df = self.clinical_df.sort_values(['unique_id', 'Visit Number'])
-        
-        # --- CRITICAL: Filter by patient_ids to prevent leakage ---
-        if patient_ids is not None:
-            self.clinical_df = self.clinical_df[self.clinical_df['unique_id'].isin(patient_ids)]
-
-        # Keep only patients with at least 2 visits
         counts = self.clinical_df['unique_id'].value_counts()
-        valid_ids = counts[counts >= 2].index
+        valid_ids = counts[counts >= 2].index  # Need at least 2 visits
         self.clinical_df = self.clinical_df[self.clinical_df['unique_id'].isin(valid_ids)]
         
         self.grouped = self.clinical_df.groupby('unique_id', sort=False)
         self.patient_ids = list(self.grouped.groups.keys())
-        
-        # Map IDs to original indices in the image tensor
-        all_ids = pd.read_csv(csv_path)['unique_id'].unique()
-        self.id_to_tensor_idx = {pid: idx for idx, pid in enumerate(all_ids)}
+        self.images = self.images[:len(self.patient_ids)]
 
-        # Features
+        # Visual field points and clinical features
         self.vf_cols = [str(i) for i in range(61)]
-        self.clinical_feature_cols = ['Age', 'Gender', 'CCT', 'IOP', 'Category_of_Glaucoma', 'Interval_Norm']
-        self.all_feature_cols = self.clinical_feature_cols + self.vf_cols 
+        self.clinical_feature_cols = [
+            'Age', 'Gender', 'CCT', 'IOP', 'Category_of_Glaucoma', 'Interval_Norm'
+        ]
+        self.all_feature_cols = self.clinical_feature_cols + self.vf_cols  # 67 total
         
         self.max_seq_len = max_seq_len
         self.overlap_stride = overlap_stride
+        
+        # Create overlapping sequences for data augmentation
         self.sequences = self._create_sequences()
+        
+        print(f"   [LOADER] Created {len(self.sequences)} training sequences from {len(self.patient_ids)} patients")
 
     def _create_sequences(self):
+        """
+        Create overlapping sequences from each patient's data.
+        Similar to paper's data augmentation in Section IV.B.1
+        """
         sequences = []
-        for pid in self.patient_ids:
-            patient_idx = self.id_to_tensor_idx[pid]
+        
+        for patient_idx, pid in enumerate(self.patient_ids):
             patient_data = self.grouped.get_group(pid).sort_values('Visit Number')
             num_visits = len(patient_data)
             
+            # Create overlapping windows
             for start_idx in range(0, max(1, num_visits - 1), self.overlap_stride):
                 end_idx = min(start_idx + self.max_seq_len, num_visits)
-                if end_idx - start_idx < 2: continue
+                
+                # Need at least 2 visits for input and target
+                if end_idx - start_idx < 2:
+                    continue
                 
                 sequences.append({
                     'patient_id': pid,
                     'patient_idx': patient_idx,
                     'start_visit': start_idx,
-                    'end_visit': end_idx
+                    'end_visit': end_idx,
+                    'num_visits': end_idx - start_idx
                 })
+        
         return sequences
-
-    def pad_seq(self, t, max_len):
-        curr_len = t.shape[0]
-        if curr_len >= max_len: return t[:max_len]
-        pad_size = max_len - curr_len
-        padding = torch.zeros((pad_size, *t.shape[1:]), dtype=t.dtype)
-        return torch.cat([t, padding], dim=0)
 
     def __len__(self):
         return len(self.sequences)
 
+    def pad_seq(self, t, max_len):
+        """Pad sequence to max_len along first dimension."""
+        curr_len = t.shape[0]
+        if curr_len >= max_len:
+            return t[:max_len]
+        
+        pad_size = max_len - curr_len
+        padding = torch.zeros((pad_size, *t.shape[1:]), dtype=t.dtype, device=t.device)
+        return torch.cat([t, padding], dim=0)
+
     def __getitem__(self, idx):
+        """
+        Returns:
+            images: [max_seq_len, 3, 224, 224] - padded image sequence
+            clinical_features: [max_seq_len, 67] - padded clinical + VF features
+            time_intervals: [max_seq_len] - normalized time intervals from first visit
+            valid_len: int - actual number of valid timesteps (before padding)
+            target_vf: [max_seq_len, 61] - VF targets (shifted by 1)
+        """
         seq_info = self.sequences[idx]
         pid = seq_info['patient_id']
-        p_idx = seq_info['patient_idx']
-        start, end = seq_info['start_visit'], seq_info['end_visit']
+        patient_idx = seq_info['patient_idx']
+        start_visit = seq_info['start_visit']
+        end_visit = seq_info['end_visit']
         
-        # Images
-        img_seq = self.images[p_idx][start:end]
+        # Get image sequence for this patient
+        images_full = self.images[patient_idx]  # [max_visits, 3, 224, 224]
         
-        # Clinical & VF
-        p_data = self.grouped.get_group(pid).iloc[start:end]
-        clin_data = torch.tensor(p_data[self.all_feature_cols].values, dtype=torch.float32)
-        vf_data = torch.tensor(p_data[self.vf_cols].values, dtype=torch.float32)
+        # Get clinical data for this patient
+        patient_data = self.grouped.get_group(pid).sort_values('Visit Number')
+        patient_subset = patient_data.iloc[start_visit:end_visit]
         
-        # Time
-        v_nums = p_data['Visit Number'].values
-        t_ints = torch.tensor(v_nums - v_nums[0], dtype=torch.float32)
-        t_ints = t_ints / (t_ints.max() + 1e-8)
+        # Extract features
+        clinical_data = torch.tensor(
+            patient_subset[self.all_feature_cols].values,
+            dtype=torch.float32
+        )  # [num_visits, 67]
         
-        # Forecast split (t vs t+1)
-        in_img, in_clin, in_time = img_seq[:-1], clin_data[:-1], t_ints[:-1]
-        tar_vf = vf_data[1:]
+        vf_data = torch.tensor(
+            patient_subset[self.vf_cols].values,
+            dtype=torch.float32
+        )  # [num_visits, 61]
         
-        actual_len = in_img.shape[0]
-        mask = torch.zeros(self.max_seq_len)
-        mask[:actual_len] = 1.0
-
+        # Extract images
+        seq_images = images_full[start_visit:end_visit]  # [num_visits, 3, 224, 224]
+        
+        # Compute time intervals from first visit (in this sequence)
+        visit_numbers = patient_subset['Visit Number'].values
+        time_deltas = visit_numbers - visit_numbers[0]
+        time_intervals = torch.tensor(time_deltas, dtype=torch.float32)  # [num_visits]
+        
+        # Normalize time intervals to [0, 1] range
+        max_delta = time_intervals.max()
+        if max_delta > 0:
+            time_intervals = time_intervals / max_delta
+        
+        # Create sequences for forecasting: t-1 is input, t is target
+        # Input uses all but last visit
+        input_images = seq_images[:-1]  # [num_visits-1, 3, 224, 224]
+        input_clinical = clinical_data[:-1]  # [num_visits-1, 67]
+        input_time = time_intervals[:-1]  # [num_visits-1]
+        
+        # Target is VF from next visit
+        target_vf = vf_data[1:]  # [num_visits-1, 61]
+        
+        actual_len = input_images.shape[0]
+        
+        # Pad sequences to max_seq_len
+        input_images = self.pad_seq(input_images, self.max_seq_len)
+        input_clinical = self.pad_seq(input_clinical, self.max_seq_len)
+        input_time = self.pad_seq(input_time, self.max_seq_len)
+        target_vf = self.pad_seq(target_vf, self.max_seq_len)
+        
         return {
-            'images': self.pad_seq(in_img, self.max_seq_len),
-            'clinical': self.pad_seq(in_clin, self.max_seq_len),
-            'time_intervals': self.pad_seq(in_time, self.max_seq_len),
-            'target_vf': self.pad_seq(tar_vf, self.max_seq_len),
-            'valid_len': actual_len,
-            'mask': mask
+            'images': input_images,
+            'clinical': input_clinical,
+            'time_intervals': input_time,
+            'target_vf': target_vf,
+            'valid_len': actual_len  # Number of valid (non-padded) timesteps
         }
 
-def create_dataloaders_fixed(tensor_path, csv_path, batch_size=4, train_split=0.7, val_split=0.15, max_seq_len=9, num_workers=0):
-    """
-    Helper function to split patients into Train/Val/Test and return DataLoaders.
-    """
-    df = pd.read_csv(csv_path)
-    # Filter patients with at least 2 visits
-    counts = df['unique_id'].value_counts()
-    valid_pids = counts[counts >= 2].index.tolist()
+
+# Example usage in DataLoader
+if __name__ == "__main__":
+    # For debugging
+    dataset = GrapeDataset(
+        tensor_path='path/to/grape_test_images1.pt',
+        csv_path='path/to/grape_test.csv',
+        max_seq_len=9,
+        overlap_stride=1
+    )
     
-    # Split patient IDs (not rows!) to avoid leakage
-    train_ids, temp_ids = train_test_split(valid_pids, train_size=train_split, random_state=42)
-    
-    # Adjusted split for val/test from the remaining 30%
-    val_rel_size = val_split / (1 - train_split)
-    val_ids, test_ids = train_test_split(temp_ids, train_size=val_rel_size, random_state=42)
-    
-    # Create datasets
-    train_ds = GrapeDataset(tensor_path, csv_path, max_seq_len, patient_ids=train_ids)
-    val_ds = GrapeDataset(tensor_path, csv_path, max_seq_len, patient_ids=val_ids)
-    test_ds = GrapeDataset(tensor_path, csv_path, max_seq_len, patient_ids=test_ids)
-    
-    # Create loaders
-    loaders = []
-    for ds, shuffle in [(train_ds, True), (val_ds, False), (test_ds, False)]:
-        loaders.append(DataLoader(ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True))
-        
-    return loaders[0], loaders[1], loaders[2]
+    sample = dataset[0]
+    print(f"Images shape: {sample['images'].shape}")  # [9, 3, 224, 224]
+    print(f"Clinical shape: {sample['clinical'].shape}")  # [9, 67]
+    print(f"Time intervals shape: {sample['time_intervals'].shape}")  # [9]
+    print(f"Target VF shape: {sample['target_vf'].shape}")  # [9, 61]
+    print(f"Valid length: {sample['valid_len']}")
 '''
 import torch
 from torch.utils.data import Dataset
