@@ -1,0 +1,15 @@
+# Core Libraries
+google-generativeai==0.3.2     # Gemini API
+faiss-cpu
+pypdf==4.0.1                   # PDF processing
+langchain==0.1.7               # Text splitting utilities
+langchain-community==0.0.20    # Additional LangChain tools
+
+# Data Processing
+numpy==1.26.3
+pandas==2.2.0
+openpyxl==3.1.2                # For Excel files
+
+# Utilities
+python-dotenv==1.0.0           # Environment variables
+tqdm==4.66.1                   # Progress bars
