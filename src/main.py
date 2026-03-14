@@ -236,8 +236,7 @@ class GlaucomaRAGPipeline:
         saved_files = self.report_generator.save_report(
             structured_output=structured_output,
             patient_id=patient_id,
-            output_formats=["txt"]
-            # output_formats=["json","txt","md"]
+            output_formats=["json","txt","md"]
         )
         
         logger.info("="*70)

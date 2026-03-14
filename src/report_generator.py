@@ -190,6 +190,9 @@ class ReportGenerator:
         Returns:
             Dictionary of saved file paths
         """
+        os.makedirs(JSON_REPORTS_DIR, exist_ok=True)
+        os.makedirs(TEXT_REPORTS_DIR, exist_ok=True)
+        os.makedirs(MD_REPORTS_DIR, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_filename = f"{patient_id}_{timestamp}"
         

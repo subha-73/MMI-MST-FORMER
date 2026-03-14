@@ -96,6 +96,7 @@ class ProgressionForecaster:
     
     def _classify_severity(self, MD: float) -> str:
         """Classify severity based on MD value"""
+        MD = round(MD, 2)
         if MD >= self.severity_thresholds["Mild"]:
             return "Mild"
         elif MD >= self.severity_thresholds["Moderate"]:

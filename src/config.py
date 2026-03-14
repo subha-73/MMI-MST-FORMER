@@ -78,17 +78,17 @@ NORMAL_VF_THRESHOLD = 30.0  # dB (age-matched normal)
 # Severity Thresholds (AAO Guidelines - based on MD)
 SEVERITY_THRESHOLDS = {
     "Normal": 0,
-    "Mild": -6,
-    "Moderate": -12,
-    "Severe": -20,
+    "Mild": -12,
+    "Moderate": -29,
+    "Severe": -29.5,
     "Advanced": -30
 }
 
 # Progression Risk Thresholds (dB/year)
 PROGRESSION_THRESHOLDS = {
-    "Slow": 0.5,
-    "Moderate": 1.0,
-    "Rapid": 2.0
+    "Slow": 0.03,
+    "Moderate": 0.06,
+    "Rapid": 0.1
 }
 
 # Forecast Time Horizons (years)

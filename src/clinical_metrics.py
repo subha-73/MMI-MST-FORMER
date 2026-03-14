@@ -151,11 +151,11 @@ class ClinicalMetricsCalculator:
         Returns:
             Severity classification string
         """
-        if MD >= -6:
+        if MD >= -12:
             return "Mild"
-        elif MD >= -12:
-            return "Moderate"
         elif MD >= -20:
+            return "Moderate"
+        elif MD >= -29.5:
             return "Severe"
         else:
             return "Advanced"
